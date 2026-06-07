@@ -7,19 +7,27 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import LoginModal from './LoginModal';
 import AccountDropdown from './AccountDropdown';
+import { useCart } from '@/context/CartContext'; // 🔴 Cart Context Import
 
 export default function Navbar() {
   const [isLoginOpen, setIsLoginOpen] = useState(false);
   const [user, setUser] = useState<any>(null);
   const [userName, setUserName] = useState<string | null>(null);
+  
+  // 🔴 Cart Count Context se fetch ho raha hai
+  const { cartCount } = useCart(); 
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
         setUser(currentUser);
-        const docSnap = await getDoc(doc(db, 'users', currentUser.uid));
-        if (docSnap.exists()) {
-          setUserName(docSnap.data().firstName);
+        try {
+          const docSnap = await getDoc(doc(db, 'users', currentUser.uid));
+          if (docSnap.exists()) {
+            setUserName(docSnap.data().firstName);
+          }
+        } catch (err) {
+          console.error("Error fetching user data:", err);
         }
       } else {
         setUser(null);
@@ -42,7 +50,7 @@ export default function Navbar() {
               </Link>
             </div>
 
-            {/* Updated Navigation Categories */}
+            {/* Navigation Categories */}
             <div className="hidden md:flex space-x-8 text-gray-700 font-medium text-sm">
               <Link href="/shop/rings" className="hover:text-rose-900 transition">Ring</Link>
               <Link href="/shop/earrings" className="hover:text-rose-900 transition">Earring</Link>
@@ -73,10 +81,15 @@ export default function Navbar() {
                 {user && <AccountDropdown />}
               </div>
               
-              <button className="hover:text-rose-800 transition relative">
+              {/* 🔴 Updated Cart Icon */}
+              <Link href="/cart" className="hover:text-rose-800 transition relative">
                 <ShoppingBag className="w-5 h-5" />
-                <span className="absolute -top-2 -right-2 bg-rose-800 text-white text-xs rounded-full h-4 w-4 flex items-center justify-center">0</span>
-              </button>
+                {cartCount > 0 && (
+                  <span className="absolute -top-2 -right-2 bg-rose-800 text-white text-xs rounded-full h-4 w-4 flex items-center justify-center">
+                    {cartCount}
+                  </span>
+                )}
+              </Link>
             </div>
           </div>
         </div>

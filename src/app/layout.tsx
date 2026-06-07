@@ -1,12 +1,28 @@
-import './globals.css';
-import Navbar from '@/components/Navbar';
+import type { Metadata } from "next";
+import { Inter } from "next/font/google";
+import "./globals.css";
+import Navbar from "@/components/Navbar";
+import { CartProvider } from "@/context/CartContext";
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+const inter = Inter({ subsets: ["latin"] });
+
+export const metadata: Metadata = {
+  title: "Shivi's Elegance",
+  description: "Handcrafted Jewelry & Elegance",
+};
+
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
   return (
     <html lang="en">
-      <body className="bg-gray-50 text-gray-900">
-        <Navbar />
-        <main>{children}</main>
+      <body className={inter.className}>
+        <CartProvider>
+          <Navbar />
+          {children}
+        </CartProvider>
       </body>
     </html>
   );
