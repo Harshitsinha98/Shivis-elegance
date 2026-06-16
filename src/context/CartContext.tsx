@@ -1,7 +1,6 @@
 'use client';
 import { createContext, useContext, useState, ReactNode } from 'react';
 
-// Product ka type define kar rahe hain
 type Product = {
   id: string;
   name: string;
@@ -15,7 +14,10 @@ type CartItem = Product & { quantity: number };
 interface CartContextType {
   cart: CartItem[];
   addToCart: (product: Product) => void;
+  removeFromCart: (id: string) => void;
+  updateQuantity: (id: string, action: 'increase' | 'decrease') => void;
   cartCount: number;
+  cartTotal: number;
 }
 
 const CartContext = createContext<CartContextType | undefined>(undefined);
@@ -35,11 +37,27 @@ export function CartProvider({ children }: { children: ReactNode }) {
     });
   };
 
-  // Cart mein total kitne items hain wo count karega
+  const removeFromCart = (id: string) => {
+    setCart((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const updateQuantity = (id: string, action: 'increase' | 'decrease') => {
+    setCart((prev) =>
+      prev.map((item) => {
+        if (item.id === id) {
+          if (action === 'increase') return { ...item, quantity: item.quantity + 1 };
+          if (action === 'decrease' && item.quantity > 1) return { ...item, quantity: item.quantity - 1 };
+        }
+        return item;
+      })
+    );
+  };
+
   const cartCount = cart.reduce((total, item) => total + item.quantity, 0);
+  const cartTotal = cart.reduce((total, item) => total + item.price * item.quantity, 0);
 
   return (
-    <CartContext.Provider value={{ cart, addToCart, cartCount }}>
+    <CartContext.Provider value={{ cart, addToCart, removeFromCart, updateQuantity, cartCount, cartTotal }}>
       {children}
     </CartContext.Provider>
   );
