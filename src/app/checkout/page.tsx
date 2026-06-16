@@ -3,31 +3,28 @@ import { useState } from 'react';
 import { useCart } from '@/context/CartContext';
 import { auth, db } from '@/lib/firebase';
 import { RecaptchaVerifier, signInWithPhoneNumber, ConfirmationResult } from 'firebase/auth';
-import { doc, setDoc, collection, addDoc, serverTimestamp } from 'firebase/firestore';
+// 🔴 Yahan 'getDoc' add kiya gaya hai
+import { doc, setDoc, getDoc, collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { CheckCircle2, MapPin, CreditCard } from 'lucide-react';
 import { State, City } from 'country-state-city';
 
 export default function CheckoutPage() {
   const { cart, cartTotal } = useCart();
   
-  // 1. Form States
   const [formData, setFormData] = useState({
     name: '', email: '', phone: '', address: '', state: '', city: '', district: '', pincode: '', landmark: ''
   });
 
-  // 2. OTP States
   const [otpSent, setOtpSent] = useState(false);
   const [otpVerified, setOtpVerified] = useState(false);
   const [otp, setOtp] = useState('');
   const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
   
-  // 3. UI & Location States
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const indianStates = State.getStatesOfCountry('IN');
   const [selectedStateCode, setSelectedStateCode] = useState('');
   const availableCities = selectedStateCode ? City.getCitiesOfState('IN', selectedStateCode) : [];
 
-  // Handlers for Form Data
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
@@ -40,7 +37,6 @@ export default function CheckoutPage() {
     setFormData((prev) => ({ ...prev, state: stateName, city: '' }));
   };
 
-  // OTP Handlers
   const handleSendOTP = async () => {
     if (formData.phone.length !== 10) return alert('Enter valid 10-digit phone number');
     try {
@@ -68,7 +64,6 @@ export default function CheckoutPage() {
     }
   };
 
-  // Razorpay Script Loader
   const loadRazorpayScript = () => {
     return new Promise((resolve) => {
       const script = document.createElement('script');
@@ -79,14 +74,12 @@ export default function CheckoutPage() {
     });
   };
 
-  // Mega Payment & Database Handler
   const handlePlaceOrder = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!otpVerified) return alert('Please verify your phone number using OTP first!');
     
     setIsProcessingPayment(true);
 
-    // Step A: Load Razorpay Script
     const res = await loadRazorpayScript();
     if (!res) {
       alert('Razorpay SDK failed to load. Are you online?');
@@ -95,7 +88,6 @@ export default function CheckoutPage() {
     }
 
     try {
-      // Step B: Create Order ID from Backend API
       const orderResponse = await fetch('/api/create-order', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -105,9 +97,9 @@ export default function CheckoutPage() {
       const orderData = await orderResponse.json();
       if (!orderData.orderId) throw new Error('Failed to generate Order ID from server');
 
-      // Step C: Initialize Razorpay Popup
       const options = {
-        key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID, 
+        // Fallback key lagayi hai taaki Vercel Env issue dobara na aaye
+        key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || 'rzp_test_T2CPZoKwaCivj6', 
         amount: orderData.amount,
         currency: 'INR',
         name: "Shivi's Elegance",
@@ -118,30 +110,34 @@ export default function CheckoutPage() {
             const currentUser = auth.currentUser;
             
             if (currentUser) {
-              // 1. Save/Update User Profile in Firestore
-              await setDoc(doc(db, 'users', currentUser.uid), {
-                firstName: formData.name.split(' ')[0] || formData.name,
-                lastName: formData.name.split(' ')[1] || '',
-                email: formData.email,
-                phone: formData.phone,
-                updatedAt: serverTimestamp()
-              }, { merge: true });
+              const userRef = doc(db, 'users', currentUser.uid);
+              const userSnap = await getDoc(userRef);
 
-              // 2. Save Full Order Details in Firestore
+              // 🔴 PROFILE FIX: Agar profile nahi hai, tabhi naya profile banega.
+              if (!userSnap.exists()) {
+                await setDoc(userRef, {
+                  firstName: formData.name.split(' ')[0] || formData.name,
+                  lastName: formData.name.split(' ')[1] || '',
+                  email: formData.email,
+                  phone: formData.phone,
+                  createdAt: serverTimestamp()
+                });
+              }
+
+              // 🔴 ORDER SAVING: Par order mein hamesha wahi detail jayegi jiske liye order place hua hai.
               await addDoc(collection(db, 'orders'), {
                 userId: currentUser.uid,
                 items: cart,
                 totalAmount: cartTotal,
                 paymentId: response.razorpay_payment_id,
                 razorpayOrderId: response.razorpay_order_id,
-                shippingDetails: formData,
+                shippingDetails: formData, // Yahan Harshit ka detail save hoga agar Shivi ne bheja hai
                 status: 'Paid',
                 createdAt: serverTimestamp()
               });
             }
 
             alert('Payment Successful! Your order has been placed.');
-            // 3. Clear the Cart and Redirect
             localStorage.removeItem('shivis_cart');
             window.location.href = '/account';
 
@@ -159,7 +155,7 @@ export default function CheckoutPage() {
         notes: {
           address: `${formData.address}, ${formData.landmark}, ${formData.city}, ${formData.state} - ${formData.pincode}`
         },
-        theme: { color: "#881337" } // Rose-900 color theme
+        theme: { color: "#881337" } 
       };
 
       const paymentObject = new (window as any).Razorpay(options);
@@ -171,14 +167,13 @@ export default function CheckoutPage() {
       
       paymentObject.open();
 
-    } catch (error) {
+    } catch (error: any) {
       console.error("Order Creation Error:", error);
-      alert('Something went wrong during payment initialization.');
+      alert(`API Error: ${error.message || 'Payment initialization failed.'}`);
       setIsProcessingPayment(false);
     }
   };
 
-  // If cart is empty, don't show the form
   if (cart.length === 0) {
     return <div className="text-center py-20 text-xl font-serif text-gray-900">Your cart is empty. Please add items to checkout.</div>;
   }
@@ -186,23 +181,19 @@ export default function CheckoutPage() {
   return (
     <div className="max-w-7xl mx-auto px-4 py-8 md:py-12 flex flex-col lg:flex-row gap-8 lg:gap-12 bg-white">
       
-      {/* Invisible Recaptcha required by Firebase */}
       <div id="checkout-recaptcha"></div>
 
-      {/* LEFT COLUMN: Main Form */}
       <div className="w-full lg:w-2/3 order-2 lg:order-1">
         <h1 className="text-2xl md:text-3xl font-serif text-gray-900 mb-6 md:mb-8 text-center lg:text-left">Secure Checkout</h1>
         
         <form onSubmit={handlePlaceOrder} className="space-y-6 md:space-y-8">
           
-          {/* Section 1: Contact Information */}
           <div className="bg-gray-50 p-4 md:p-6 rounded-xl border border-gray-100 shadow-sm">
             <h2 className="text-base md:text-lg font-medium text-gray-900 mb-4">Contact Information</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <input required type="text" name="name" placeholder="Full Name" onChange={handleChange} className="w-full p-3 text-sm md:text-base border rounded-md outline-none focus:border-rose-800 bg-white" />
               <input required type="email" name="email" placeholder="Email Address" onChange={handleChange} className="w-full p-3 text-sm md:text-base border rounded-md outline-none focus:border-rose-800 bg-white" />
               
-              {/* OTP Input Block */}
               <div className="md:col-span-2 border border-rose-100 bg-white p-3 md:p-4 rounded-md flex flex-col sm:flex-row gap-4 items-end shadow-sm">
                 <div className="w-full">
                   <label className="text-xs text-gray-500 mb-1 block">Phone Number (Required for OTP & Delivery)</label>
@@ -236,7 +227,6 @@ export default function CheckoutPage() {
             </div>
           </div>
 
-          {/* Section 2: Shipping Address */}
           <div className="bg-gray-50 p-4 md:p-6 rounded-xl border border-gray-100 shadow-sm">
             <h2 className="text-base md:text-lg font-medium text-gray-900 mb-4">Shipping Address</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -274,7 +264,6 @@ export default function CheckoutPage() {
         </form>
       </div>
 
-      {/* RIGHT COLUMN: Mini Cart Summary */}
       <div className="w-full lg:w-1/3 order-1 lg:order-2">
         <div className="bg-gray-50 p-4 md:p-6 rounded-xl border border-gray-100 sticky top-24 shadow-sm">
           <h2 className="text-lg font-serif text-gray-900 mb-4">Order Summary</h2>
