@@ -1,75 +1,97 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { db } from '@/lib/firebase';
 import { collection, addDoc, serverTimestamp, doc, getDoc } from 'firebase/firestore';
-import { Html5QrcodeScanner } from 'html5-qrcode';
-import { Barcode, CheckCircle2, Camera, RefreshCw } from 'lucide-react';
+// 🔴 Yahan humne Scanner ki jagah raw Engine import kiya hai custom UI ke liye
+import { Html5Qrcode } from 'html5-qrcode';
+import { Barcode, CheckCircle2, Camera, RefreshCw, XCircle } from 'lucide-react';
 
 export default function BarcodeAddProduct() {
   const [barcodeNumber, setBarcodeNumber] = useState('');
   const [loading, setLoading] = useState(false);
-  const [isScanning, setIsScanning] = useState(true);
+  
+  // Camera States
+  const [isScanning, setIsScanning] = useState(false);
+  const [cameraError, setCameraError] = useState('');
+  const scannerRef = useRef<Html5Qrcode | null>(null);
 
   // Product Form State
   const [product, setProduct] = useState({
     name: '', price: '', category: '', image: '', description: '', stock: '10', sku: ''
   });
 
-  // 🔴 1. Initialize Camera Scanner on Page Load
+  // 🔴 Clean Stop Camera Function
+  const stopScanner = () => {
+    if (scannerRef.current) {
+      scannerRef.current.stop().then(() => {
+        scannerRef.current?.clear();
+        scannerRef.current = null;
+      }).catch(err => console.error("Error stopping scanner:", err));
+    }
+    setIsScanning(false);
+  };
+
+  // 🔴 Start Custom Camera Function
+  const startScanner = async () => {
+    setCameraError('');
+    setIsScanning(true);
+    setBarcodeNumber('');
+
+    // Wait for a tiny moment to ensure the <div id="reader"> is mounted in DOM
+    setTimeout(async () => {
+      try {
+        const html5QrCode = new Html5Qrcode("reader");
+        scannerRef.current = html5QrCode;
+        
+        const config = { fps: 10, qrbox: { width: 250, height: 100 } };
+
+        try {
+          // Attempt 1: Force BACK Camera (For Mobile)
+          await html5QrCode.start({ facingMode: "environment" }, config, onScanSuccess, undefined);
+        } catch (err) {
+          console.warn("Back camera failed, trying front/webcam...", err);
+          // Attempt 2: Fallback to ANY Camera (For MacBook/Desktop)
+          await html5QrCode.start({ facingMode: "user" }, config, onScanSuccess, undefined);
+        }
+      } catch (err) {
+        console.error("Camera access error:", err);
+        setCameraError("Camera permission denied. Please allow camera access in browser settings.");
+        setIsScanning(false);
+      }
+    }, 100);
+  };
+
+  const onScanSuccess = (decodedText: string) => {
+    setBarcodeNumber(decodedText);
+    stopScanner(); // Scan hote hi camera band
+    fetchMasterProductDetails(decodedText);
+  };
+
+  // Component unmount hone par camera jarur band ho
   useEffect(() => {
-    if (!isScanning) return;
+    return () => stopScanner();
+  }, []);
 
-    const scanner = new Html5QrcodeScanner(
-      "reader", 
-      { fps: 10, qrbox: { width: 250, height: 250 } },
-      /* verbose= */ false
-    );
-
-    scanner.render(onScanSuccess, onScanFailure);
-
-    function onScanSuccess(decodedText: string) {
-      setBarcodeNumber(decodedText);
-      setIsScanning(false);
-      scanner.clear(); // Scan hote hi camera band karein
-      fetchMasterProductDetails(decodedText); // Database se details fetch karein
-    }
-
-    function onScanFailure(error: any) {
-      // Camera continuous scan karta hai, errors ko ignore kar sakte hain
-    }
-
-    return () => {
-      scanner.clear().catch(err => console.error("Scanner clear error", err));
-    };
-  }, [isScanning]);
-
-  // 🔴 2. Master Database se Barcode match karke Autofill karna
+  // Database Autofill Logic
   const fetchMasterProductDetails = async (barcode: string) => {
     setLoading(true);
     try {
-      // Maan lijiye aapne ek 'master_inventory' banaya hai jahan saare supplier barcodes save hain
       const docRef = doc(db, 'master_inventory', barcode);
       const docSnap = await getDoc(docRef);
 
       if (docSnap.exists()) {
         const data = docSnap.data();
         setProduct({
-          name: data.name || '',
-          price: data.price ? String(data.price) : '',
-          category: data.category || '',
-          image: data.image || '',
-          description: data.description || '',
-          stock: '10',
-          sku: data.sku || barcode
+          name: data.name || '', price: data.price ? String(data.price) : '',
+          category: data.category || '', image: data.image || '',
+          description: data.description || '', stock: '10', sku: data.sku || barcode
         });
         alert('Product details autofilled successfully! 🎉');
       } else {
-        // Agar naya barcode hai toh admin khud fill karega
-        alert('New Barcode detected! Please fill details manually.');
         setProduct(prev => ({ ...prev, sku: barcode }));
       }
     } catch (err) {
-      console.error("Error fetching master details:", err);
+      console.error("Fetch error:", err);
     }
     setLoading(false);
   };
@@ -78,17 +100,13 @@ export default function BarcodeAddProduct() {
     setProduct({ ...product, [e.target.name]: e.target.value });
   };
 
-  // 🔴 3. Final Confirm and Upload to live products collection
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     try {
       await addDoc(collection(db, 'products'), {
-        name: product.name,
+        ...product,
         price: Number(product.price),
-        category: product.category,
-        image: product.image,
-        description: product.description,
         stock: Number(product.stock),
         sku: product.sku.toUpperCase(),
         barcode: barcodeNumber,
@@ -96,10 +114,8 @@ export default function BarcodeAddProduct() {
       });
 
       alert('Product Successfully Published to Store! 🚀');
-      // Reset page state
       setProduct({ name: '', price: '', category: '', image: '', description: '', stock: '10', sku: '' });
       setBarcodeNumber('');
-      setIsScanning(true); // Wapas camera open karein agle product ke liye
     } catch (error) {
       alert('Upload failed.');
     }
@@ -111,27 +127,53 @@ export default function BarcodeAddProduct() {
       <div className="flex items-center gap-3 mb-8 pb-4 border-b border-gray-100">
         <div className="bg-rose-100 p-2.5 rounded-lg text-rose-900"><Barcode className="w-6 h-6" /></div>
         <div>
-          <h1 className="text-2xl font-serif text-gray-900">Barcode Smart Onboarding</h1>
-          <p className="text-sm text-gray-500 mt-1">Scan a barcode to automatically pull data and fill the schema.</p>
+          <h1 className="text-2xl font-serif text-gray-900">Smart Barcode Scanner</h1>
+          <p className="text-sm text-gray-500 mt-1">Scan physical tags to autofill product details.</p>
         </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-        {/* Left Sub-Column: Scanner Box */}
+        {/* Left Sub-Column: Custom Scanner UI */}
         <div className="md:col-span-1 space-y-4">
-          <label className="block text-sm font-medium text-gray-700 flex items-center gap-1"><Camera className="w-4 h-4"/> Scanner View</label>
+          <label className="block text-sm font-medium text-gray-700 flex items-center gap-2">
+            <Camera className="w-4 h-4"/> Scanner Window
+          </label>
           
-          {isScanning ? (
-            <div id="reader" className="w-full overflow-hidden rounded-xl border border-gray-200 bg-gray-50 shadow-inner"></div>
-          ) : (
-            <div className="p-4 border border-green-200 bg-green-50 rounded-xl text-center space-y-3">
-              <CheckCircle2 className="w-8 h-8 text-green-600 mx-auto" />
-              <p className="text-xs font-mono font-bold text-gray-700 bg-white border py-1 rounded px-2 break-all">Scanned: {barcodeNumber}</p>
-              <button type="button" onClick={() => setIsScanning(true)} className="text-xs font-medium text-rose-900 flex items-center gap-1 mx-auto hover:underline mt-2">
-                <RefreshCw className="w-3 h-3"/> Rescan Barcode
+          {/* Default State / Scan Result State */}
+          {!isScanning && (
+            <div className={`p-6 border rounded-xl text-center space-y-4 ${barcodeNumber ? 'border-green-200 bg-green-50' : 'border-gray-200 bg-gray-50'}`}>
+              {barcodeNumber ? (
+                <>
+                  <CheckCircle2 className="w-10 h-10 text-green-600 mx-auto" />
+                  <p className="text-sm font-mono font-bold text-gray-800 bg-white border py-1.5 rounded break-all">{barcodeNumber}</p>
+                </>
+              ) : (
+                <div className="py-6">
+                  <Barcode className="w-12 h-12 text-gray-300 mx-auto mb-2" />
+                  <p className="text-xs text-gray-500">Ready to scan product tag</p>
+                </div>
+              )}
+              
+              <button type="button" onClick={startScanner} className="w-full bg-rose-900 text-white py-2.5 rounded-lg text-sm font-medium hover:bg-rose-800 transition shadow-sm flex items-center justify-center gap-2">
+                {barcodeNumber ? <><RefreshCw className="w-4 h-4"/> Rescan Barcode</> : <><Camera className="w-4 h-4"/> Start Camera</>}
               </button>
             </div>
           )}
+
+          {/* Active Camera State with Custom UI */}
+          {isScanning && (
+            <div className="relative overflow-hidden rounded-xl border border-rose-200 bg-black shadow-inner">
+              <div id="reader" className="w-full bg-black"></div>
+              {/* Overlay styling for modern look */}
+              <div className="absolute inset-0 border-[3px] border-rose-900/50 rounded-xl pointer-events-none"></div>
+              
+              <button type="button" onClick={stopScanner} className="absolute top-2 right-2 bg-red-600 text-white p-1.5 rounded-full hover:bg-red-700 transition">
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
+          )}
+
+          {cameraError && <p className="text-xs text-red-600 text-center">{cameraError}</p>}
         </div>
 
         {/* Right Sub-Column: Form Details */}
@@ -143,7 +185,7 @@ export default function BarcodeAddProduct() {
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">SKU / Code</label>
-              <input required type="text" name="sku" value={product.sku} onChange={handleChange} className="w-full p-2.5 text-sm border rounded-lg focus:border-rose-900 outline-none uppercase bg-gray-50" readOnly />
+              <input required type="text" name="sku" value={product.sku} onChange={handleChange} className="w-full p-2.5 text-sm border rounded-lg focus:border-rose-900 outline-none uppercase bg-gray-50" readOnly placeholder="Scanned SKU" />
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">Price (₹)</label>
@@ -174,7 +216,7 @@ export default function BarcodeAddProduct() {
           </div>
 
           <div className="flex justify-end pt-4 border-t border-gray-100">
-            <button type="submit" disabled={loading || isScanning} className="w-full sm:w-auto bg-rose-900 text-white px-6 py-3 rounded-lg text-sm font-medium hover:bg-rose-800 disabled:opacity-50 transition-all shadow-sm">
+            <button type="submit" disabled={loading} className="w-full sm:w-auto bg-rose-900 text-white px-6 py-3 rounded-lg text-sm font-medium hover:bg-rose-800 disabled:opacity-50 transition-all shadow-sm">
               {loading ? 'UPLOADING TO STORE...' : 'CONFIRM & PUBLISH PRODUCT'}
             </button>
           </div>
